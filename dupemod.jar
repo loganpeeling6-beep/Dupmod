@@ -1,0 +1,182 @@
+plugins {
+    id 'fabric-loom' version '1.14-SNAPSHOT'
+    id 'maven-publish'
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = project.archives_base_name
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    mappings loom.officialMojangMappings()
+    modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+}
+
+processResources {
+    inputs.property "version", project.version
+    filesMatching("fabric.mod.json") {
+        expand "version": inputs.properties.version
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    it.options.release = 21
+}
+
+java {
+    withSourcesJar()
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}
+
+package com.example.dupe;
+
+import com.mojang.brigadier.Command;
+import net.fabricmc.api.ModInitializer;
+import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
+import net.minecraft.commands.Commands;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.item.ItemStack;
+
+/**
+ * /dupe - gives you a second copy of the item in your main hand (x2 total).
+ * Runs on the server, so vanilla clients can join a server that has this mod.
+ * Only players with operator level 2 (gamemaster) can use it.
+ */
+public class DupeMod implements ModInitializer {
+
+    @Override
+    public void onInitialize() {
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
+                dispatcher.register(
+                        Commands.literal("dupe")
+                                .requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
+                                .executes(context -> {
+                                    ServerPlayer player = context.getSource().getPlayerOrException();
+                                    ItemStack held = player.getMainHandItem();
+
+                                    if (held.isEmpty()) {
+                                        context.getSource().sendFailure(
+                                                Component.literal("Hold an item in your main hand first."));
+                                        return 0;
+                                    }
+
+                                    ItemStack copy = held.copy();
+                                    // Put the copy in the inventory; if it is full, drop it at your feet.
+                                    if (!player.getInventory().add(copy) || !copy.isEmpty()) {
+                                        player.drop(copy, false);
+                                    }
+
+                                    context.getSource().sendSuccess(
+                                            () -> Component.literal("Duplicated your held item (x2)."), false);
+                                    return Command.SINGLE_SUCCESS;
+                                })));
+    }
+}
+
+{
+  "schemaVersion": 1,
+  "id": "dupemod",
+  "version": "${version}",
+  "name": "Dupe",
+  "description": "Adds a /dupe command that doubles the item in your main hand. Operator only.",
+  "authors": [],
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "main": ["com.example.dupe.DupeMod"]
+  },
+  "depends": {
+    "fabricloader": ">=0.18.1",
+    "minecraft": "~1.21.11",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}
+
+name: Build mod
+
+on:
+  workflow_dispatch:
+  push:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 9.2.0
+
+      - name: Build
+        run: gradle build --no-daemon
+
+      - name: Upload jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: dupemod-jar
+          path: build/libs/dupemod-1.0.0.jar
+
+# Dupe (Fabric, Minecraft 1.21.11)
+
+`/dupe` gives you a second copy of the item in your main hand (x2 total). If your inventory is full, the copy drops at your feet. Operator level 2 required.
+
+## Build
+Needs Java 21 and Gradle (or the wrapper from the Fabric template).
+
+    gradle build
+
+The jar is in `build/libs/dupemod-1.0.0.jar` (not the `-sources` one).
+
+If Gradle can't find a version, open `gradle.properties` and use the newest
+matching versions from https://fabricmc.net/develop
+
+No wrapper is included. Easiest fix: generate a blank project at
+https://fabricmc.net/develop/template, then copy `src/main/java/com/example/dupe/DupeMod.java`
+and `src/main/resources/fabric.mod.json` over its files (use Mojang mappings).
+
+## Install
+- Singleplayer: put the jar and Fabric API in `.minecraft/mods`. You need cheats on
+  (or be opped) to use `/dupe`.
+- Your own server: put the jar and Fabric API in the server's `mods` folder. Players
+  do not need the mod on their client. Make yourself op: `/op <name>`.
+
+## If compiling fails
+The most likely line is the permission check in `DupeMod.java`
+(`Commands.hasPermission(Commands.LEVEL_GAMEMASTERS)`), because 1.21.11 changed how
+command permissions work.
+
+org.gradle.jvmargs=-Xmx2G
+org.gradle.parallel=true
+
+# Check https://fabricmc.net/develop for the newest matching versions if any of these fail to resolve.
+minecraft_version=1.21.11
+loader_version=0.18.2
+fabric_version=0.140.0+1.21.11
+
+mod_version=1.0.0
+maven_group=com.example
+archives_base_name=dupemod
+
+pluginManagement {
+    repositories {
+        maven { url = 'https://maven.fabricmc.net/' }
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+rootProject.name = 'dupemod'
